@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mark Attendance</title>
+    <link rel="stylesheet" href="attendance-list.css">
+</head>
+<body>
+
+    <div class="container">
+
+        <h1>Mark Attendance</h1>
+
+        <p id="date"></p>
+
+        <div class="summary">
+            <div>
+                <b id="total">0</b>
+                <span>Total</span>
+            </div>
+
+            <div>
+                <b id="present">0</b>
+                <span>Present</span>
+            </div>
+
+            <div>
+                <b id="absent">0</b>
+                <span>Absent</span>
+            </div>
+        </div>
+
+        <input
+            type="text"
+            id="search"
+            placeholder="Search Roll Number..."
+            onkeyup="searchStudent()"
+        >
+
+        <div id="studentList"></div>
+
+        <button class="submit" onclick="submitAttendance()">
+            Submit Attendance
+        </button>
+
+    </div>
+
+    <script src="attendance-list.js"></script>
+
+</body>
+</html>

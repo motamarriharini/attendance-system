@@ -1,0 +1,46 @@
+<!DOCTYPE html><html>
+<head>
+    <title>Attendance System</title>
+    <link rel="stylesheet" href="attendance.css">
+</head>
+<body><div class="container">
+    <h1>Attendance System</h1>
+
+    <p class="date" id="date"></p>
+
+    <div class="info">
+        <div>
+            <h2>5</h2>
+            <p>Total Students</p>
+        </div>
+
+        <div>
+            <h2 id="present">5</h2>
+            <p>Present</p>
+        </div>
+
+        <div>
+            <h2 id="absent">0</h2>
+            <p>Absent</p>
+        </div>
+    </div>
+
+    <button onclick="startAttendance()">
+        Start Attendance
+    </button>
+
+    <button onclick="viewHistory()">
+        Attendance History
+    </button>
+</div>
+
+<script src="attendance.js"></script>
+
+<script>
+    function viewHistory() {
+        window.location.href = "attendance-history.html";
+    }
+</script>
+
+</body>
+</html>
