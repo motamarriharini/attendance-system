@@ -92,15 +92,28 @@ h1 {
     color: #c62828;
 }
 
-.call-btn {
+.contact-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.call-btn,
+.message-btn {
     display: inline-block;
-    margin-top: 6px;
-    padding: 6px 10px;
-    background: #222;
-    color: white;
-    text-decoration: none;
+    padding: 7px 12px;
     border-radius: 6px;
+    text-decoration: none;
+    color: white;
     font-size: 13px;
+}
+
+.call-btn {
+    background: #222;
+}
+
+.message-btn {
+    background: #25d366;
 }
 
 button {
@@ -124,6 +137,16 @@ button {
     .status-btn {
         min-width: 75px;
         padding: 8px 8px;
+        font-size: 12px;
+    }
+
+    .contact-buttons {
+        gap: 6px;
+    }
+
+    .call-btn,
+    .message-btn {
+        padding: 6px 9px;
         font-size: 12px;
     }
 }

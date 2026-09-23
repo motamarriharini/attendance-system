@@ -1,18 +1,37 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>Attendance History</title>
+
     <link rel="stylesheet" href="attendance-history.css">
 </head>
+
 <body>
 
     <div class="container">
 
         <h1>Attendance History</h1>
 
-        <label>Select Month:</label>
+        <div class="month-selection">
 
-        <input type="month" id="month">
+            <div>
+                <label for="fromMonth">From Month:</label>
+                <input type="month" id="fromMonth">
+            </div>
+
+            <div>
+                <label for="toMonth">To Month:</label>
+                <input type="month" id="toMonth">
+            </div>
+
+            <button id="viewHistory">
+                View History
+            </button>
+
+        </div>
 
         <div id="history"></div>
 

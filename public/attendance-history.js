@@ -1,58 +1,106 @@
-const monthInput = document.getElementById("month");
-const history = document.getElementById("history");
+document.getElementById("viewHistory").addEventListener("click", async function () {
 
-const today = new Date();
+    const fromMonth = document.getElementById("fromMonth").value;
+    const toMonth = document.getElementById("toMonth").value;
+    const historyDiv = document.getElementById("history");
 
-const currentMonth =
-    today.getFullYear() +
-    "-" +
-    String(today.getMonth() + 1).padStart(2, "0");
+    if (!fromMonth || !toMonth) {
+        alert("Please select both months.");
+        return;
+    }
 
-monthInput.value = currentMonth;
+    if (fromMonth > toMonth) {
+        alert("From Month cannot be after To Month.");
+        return;
+    }
 
-monthInput.addEventListener("change", loadHistory);
+    try {
 
-async function loadHistory() {
+        const response = await fetch(
+            `/api/attendance-history?from=${fromMonth}&to=${toMonth}`
+        );
 
-    history.innerHTML = "Loading...";
+        const data = await response.json();
 
-    const month = monthInput.value;
+        if (!response.ok) {
+            throw new Error("Failed to load attendance history.");
+        }
 
-    const response = await fetch(
-        `/api/attendance-history?month=${month}`
-    );
+        historyDiv.innerHTML = "";
 
-    const data = await response.json();
+        if (data.length === 0) {
+            historyDiv.innerHTML = "<p>No attendance records found.</p>";
+            return;
+        }
 
-    history.innerHTML = "";
+        data.forEach(student => {
 
-    data.forEach(function(student) {
+            const studentDiv = document.createElement("div");
+            studentDiv.className = "student-history";
 
-        const card = document.createElement("div");
+            let monthlyHTML = "";
 
-        card.className = "student-card";
+            student.months.forEach(month => {
 
-        card.innerHTML = `
-            <div class="student-name">
-                ${student.name}
-            </div>
+                monthlyHTML += `
+                    <div class="month-row">
+                        <strong>${month.month}</strong>
+                        <span>Working Days: ${month.workingDays}</span>
+                        <span>Present: ${month.present}</span>
+                        <span>Absent: ${month.absent}</span>
+                        <span>Attendance: ${month.percentage}%</span>
+                    </div>
+                `;
+            });
 
-            <div class="roll">
-                ${student.roll_number}
-            </div>
+            let warningHTML = "";
 
-            <div class="attendance-info">
-                Working Days: ${student.working_days}<br>
-                Present: ${student.present_days}<br>
-                Absent: ${student.absent_days}<br>
-                <span class="percentage">
-                    Attendance: ${student.percentage}%
-                </span>
-            </div>
-        `;
+            if (Number(student.cumulativePercentage) < 75) {
 
-        history.appendChild(card);
-    });
-}
+                const message =
+                    `Dear ${student.name}, your cumulative attendance is ${student.cumulativePercentage}%. ` +
+                    `Your attendance is below 75%. Condemnation fee is applicable. Please contact the college office.`;
 
-loadHistory();
+                const whatsappLink =
+                    `https://wa.me/91${student.phone}?text=${encodeURIComponent(message)}`;
+
+                warningHTML = `
+                    <div class="attendance-warning">
+                        <strong>⚠ Attendance below 75%</strong>
+                        <p>
+                            Condemnation fee is applicable.
+                        </p>
+
+                        <a href="${whatsappLink}" target="_blank">
+                            <button class="message-button">
+                                Send Message
+                            </button>
+                        </a>
+                    </div>
+                `;
+            }
+
+            studentDiv.innerHTML = `
+                <h2>${student.roll_number} - ${student.name}</h2>
+
+                ${monthlyHTML}
+
+                <div class="cumulative">
+                    <strong>Cumulative Attendance:</strong>
+                    ${student.cumulativePercentage}%
+                </div>
+
+                ${warningHTML}
+            `;
+
+            historyDiv.appendChild(studentDiv);
+        });
+
+    } catch (error) {
+
+        console.error(error);
+
+        historyDiv.innerHTML =
+            "<p>Error loading attendance history.</p>";
+    }
+});

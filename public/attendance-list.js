@@ -29,6 +29,37 @@ function displayStudents(list = students) {
 
         div.className = "student-row";
 
+        let contactButtons = "";
+
+        if (isAbsent) {
+
+            const message =
+                `Dear Parent, your ward ${student.name} (${student.roll_number}) is absent today. Please take note of the attendance.`;
+
+            const whatsappLink =
+                `https://wa.me/91${student.phone}?text=${encodeURIComponent(message)}`;
+
+            contactButtons = `
+                <div class="phone">
+                    Phone: ${student.phone}
+                </div>
+
+                <div class="contact-buttons">
+
+                    <a class="call-btn" href="tel:${student.phone}">
+                        Call
+                    </a>
+
+                    <a class="message-btn"
+                       href="${whatsappLink}"
+                       target="_blank">
+                        Message
+                    </a>
+
+                </div>
+            `;
+        }
+
         div.innerHTML = `
             <div class="student-details">
 
@@ -40,19 +71,7 @@ function displayStudents(list = students) {
                     ${student.name}
                 </div>
 
-                ${
-                    isAbsent
-                    ? `
-                        <div class="phone">
-                            Phone: ${student.phone}
-                        </div>
-
-                        <a class="call-btn" href="tel:${student.phone}">
-                            Call
-                        </a>
-                    `
-                    : ""
-                }
+                ${contactButtons}
 
             </div>
 
