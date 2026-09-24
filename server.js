@@ -14,6 +14,10 @@ const turso = createClient({
 app.use(express.json());
 app.use(express.static("public"));
 
+app.get("/test", (req, res) => {
+    res.send("Render server is working");
+});;
+
 
 // ===============================
 // GET ALL STUDENTS
