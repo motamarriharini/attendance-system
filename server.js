@@ -1,47 +1,15 @@
+require("dotenv").config();
+
 const express = require("express");
-const Database = require("better-sqlite3");
+const { createClient } = require("@libsql/client");
 
 const app = express();
 const PORT = 3000;
 
-const db = new Database("attendance.db");
-
-
-// ===============================
-// STUDENTS TABLE
-// ===============================
-
-db.prepare(`
-    CREATE TABLE IF NOT EXISTS students (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        roll_number TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        phone TEXT
-    )
-`).run();
-
-
-// ===============================
-// ATTENDANCE TABLE
-// ===============================
-
-db.prepare(`
-    CREATE TABLE IF NOT EXISTS attendance (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        student_id INTEGER NOT NULL,
-        date TEXT NOT NULL,
-        status TEXT NOT NULL,
-        FOREIGN KEY (student_id) REFERENCES students(id)
-    )
-`).run();
-
-
-// Prevent duplicate attendance
-db.prepare(`
-    CREATE UNIQUE INDEX IF NOT EXISTS unique_student_date
-    ON attendance(student_id, date)
-`).run();
-
+const turso = createClient({
+    url: process.env.TURSO_DATABASE_URL,
+    authToken: process.env.TURSO_AUTH_TOKEN
+});
 
 app.use(express.json());
 app.use(express.static("public"));
@@ -51,61 +19,69 @@ app.use(express.static("public"));
 // GET ALL STUDENTS
 // ===============================
 
-app.get("/api/students", (req, res) => {
+app.get("/api/students", async (req, res) => {
 
-    const students = db.prepare(`
-        SELECT *
-        FROM students
-        ORDER BY roll_number
-    `).all();
+    try {
 
-    res.json(students);
+        const result = await turso.execute(`
+            SELECT id, roll_number, name, phone
+            FROM students
+            ORDER BY id
+        `);
+
+        res.json(result.rows);
+
+    } catch (error) {
+
+        console.error(error);
+
+        res.status(500).json({
+            message: "Failed to load students."
+        });
+    }
 });
 
 
 // ===============================
-// SAVE ATTENDANCE
+// SUBMIT ATTENDANCE
 // ===============================
 
-app.post("/api/attendance", (req, res) => {
-
-    const { date, attendance } = req.body;
-
-    if (!date || !attendance) {
-        return res.status(400).json({
-            message: "Date and attendance are required."
-        });
-    }
-
-    const insert = db.prepare(`
-        INSERT INTO attendance
-        (student_id, date, status)
-        VALUES (?, ?, ?)
-
-        ON CONFLICT(student_id, date)
-        DO UPDATE SET status = excluded.status
-    `);
-
-    const saveAttendance = db.transaction(() => {
-
-        for (const record of attendance) {
-
-            insert.run(
-                record.student_id,
-                date,
-                record.status
-            );
-
-        }
-
-    });
+app.post("/api/attendance", async (req, res) => {
 
     try {
 
-        saveAttendance();
+        const { date, attendance } = req.body;
+
+        if (!date || !Array.isArray(attendance)) {
+
+            return res.status(400).json({
+                message: "Invalid attendance data."
+            });
+        }
+
+        const statements = attendance.map(record => ({
+
+            sql: `
+                INSERT INTO attendance
+                (student_id, date, status)
+                VALUES (?, ?, ?)
+
+                ON CONFLICT(student_id, date)
+                DO UPDATE SET status = excluded.status
+            `,
+
+            args: [
+                record.student_id,
+                date,
+                record.status
+            ]
+
+        }));
+
+        await turso.batch(statements, "write");
 
         res.json({
-            message: "Attendance saved successfully!"
+            message: "Attendance submitted successfully."
         });
 
     } catch (error) {
@@ -113,336 +89,202 @@ app.post("/api/attendance", (req, res) => {
         console.error(error);
 
         res.status(500).json({
-            message: "Failed to save attendance."
+            message: "Failed to submit attendance."
         });
-
     }
 });
 
 
-// ======================================================
+// ===============================
 // ATTENDANCE HISTORY
-// FROM MONTH → TO MONTH
-// INCLUDING MONTHLY + CUMULATIVE ATTENDANCE
-// ======================================================
+// ===============================
 
-app.get("/api/attendance-history", (req, res) => {
+app.get("/api/attendance-history", async (req, res) => {
 
-    const { from, to, month } = req.query;
+    try {
 
+        const { from, to, month } = req.query;
 
-    // --------------------------------------------------
-    // OLD SINGLE-MONTH REQUEST
-    // This keeps the old feature working.
-    // --------------------------------------------------
+        let fromMonth = from;
+        let toMonth = to;
 
-    if (month && !from && !to) {
+        if (month) {
+            fromMonth = month;
+            toMonth = month;
+        }
 
-        const students = db.prepare(`
-            SELECT
-                s.id,
-                s.roll_number,
-                s.name,
+        if (!fromMonth || !toMonth) {
 
-                COUNT(a.id) AS working_days,
+            return res.status(400).json({
+                message: "Please provide from and to months."
+            });
+        }
 
-                SUM(
-                    CASE
-                        WHEN a.status = 'Present'
-                        THEN 1
-                        ELSE 0
-                    END
-                ) AS present_days,
+        if (
+            !/^\d{4}-\d{2}$/.test(fromMonth) ||
+            !/^\d{4}-\d{2}$/.test(toMonth)
+        ) {
 
-                SUM(
-                    CASE
-                        WHEN a.status = 'Absent'
-                        THEN 1
-                        ELSE 0
-                    END
-                ) AS absent_days
+            return res.status(400).json({
+                message: "Invalid month format."
+            });
+        }
 
-            FROM students s
+        if (fromMonth > toMonth) {
 
-            LEFT JOIN attendance a
-            ON s.id = a.student_id
-            AND substr(a.date, 1, 7) = ?
-
-            GROUP BY s.id
-
-            ORDER BY s.roll_number
-        `).all(month);
+            return res.status(400).json({
+                message: "From month cannot be after to month."
+            });
+        }
 
 
-        const result = students.map(function(student) {
+        // First day of selected starting month
+        const startDate = `${fromMonth}-01`;
 
-            const workingDays =
-                student.working_days || 0;
+        // Last day of selected ending month
+        const [year, monthNumber] = toMonth.split("-").map(Number);
 
-            const presentDays =
-                student.present_days || 0;
+        const lastDay = new Date(
+            year,
+            monthNumber,
+            0
+        ).getDate();
 
-            const absentDays =
-                student.absent_days || 0;
+        const endDate =
+            `${toMonth}-${String(lastDay).padStart(2, "0")}`;
 
 
-            const percentage =
-                workingDays > 0
-                    ? ((presentDays / workingDays) * 100).toFixed(2)
+        // Get students
+        const studentsResult = await turso.execute(`
+            SELECT id, roll_number, name, phone
+            FROM students
+            ORDER BY id
+        `);
+
+        const students = studentsResult.rows;
+
+
+        // Get attendance records
+        const attendanceResult = await turso.execute({
+
+            sql: `
+                SELECT student_id, date, status
+                FROM attendance
+                WHERE date >= ?
+                AND date <= ?
+                ORDER BY date
+            `,
+
+            args: [
+                startDate,
+                endDate
+            ]
+
+        });
+
+        const attendanceRecords = attendanceResult.rows;
+
+
+        // Create list of months
+        const months = [];
+
+        let currentYear = Number(fromMonth.substring(0, 4));
+        let currentMonth = Number(fromMonth.substring(5, 7));
+
+        const endYear = Number(toMonth.substring(0, 4));
+        const endMonth = Number(toMonth.substring(5, 7));
+
+        while (
+            currentYear < endYear ||
+            (
+                currentYear === endYear &&
+                currentMonth <= endMonth
+            )
+        ) {
+
+            months.push(
+                `${currentYear}-${String(currentMonth).padStart(2, "0")}`
+            );
+
+            currentMonth++;
+
+            if (currentMonth === 13) {
+                currentMonth = 1;
+                currentYear++;
+            }
+        }
+
+
+        // Prepare history for each student
+        const history = students.map(student => {
+
+            let totalWorkingDays = 0;
+            let totalPresent = 0;
+
+            const monthlyData = months.map(month => {
+
+                const records = attendanceRecords.filter(record =>
+                    record.student_id === student.id &&
+                    record.date.startsWith(month)
+                );
+
+                const workingDays = records.length;
+
+                const present = records.filter(
+                    record => record.status === "Present"
+                ).length;
+
+                const absent = records.filter(
+                    record => record.status === "Absent"
+                ).length;
+
+                totalWorkingDays += workingDays;
+                totalPresent += present;
+
+                const percentage =
+                    workingDays > 0
+                        ? ((present / workingDays) * 100).toFixed(2)
+                        : "0.00";
+
+                return {
+                    month: month,
+                    workingDays: workingDays,
+                    present: present,
+                    absent: absent,
+                    percentage: percentage
+                };
+
+            });
+
+
+            const cumulativePercentage =
+                totalWorkingDays > 0
+                    ? ((totalPresent / totalWorkingDays) * 100).toFixed(2)
                     : "0.00";
 
 
             return {
-
+                id: student.id,
                 roll_number: student.roll_number,
-
                 name: student.name,
-
-                working_days: workingDays,
-
-                present_days: presentDays,
-
-                absent_days: absentDays,
-
-                percentage: percentage
-
+                phone: student.phone,
+                months: monthlyData,
+                cumulativePercentage: cumulativePercentage
             };
 
         });
 
 
-        return res.json(result);
-    }
+        res.json(history);
 
+    } catch (error) {
 
-    // --------------------------------------------------
-    // NEW FROM-MONTH TO TO-MONTH REQUEST
-    // --------------------------------------------------
+        console.error(error);
 
-    if (!from || !to) {
-
-        return res.status(400).json({
-            message: "Please provide From Month and To Month."
+        res.status(500).json({
+            message: "Failed to load attendance history."
         });
-
     }
-
-
-    if (from > to) {
-
-        return res.status(400).json({
-            message: "From Month cannot be after To Month."
-        });
-
-    }
-
-
-    // --------------------------------------------------
-    // GET STUDENTS
-    // --------------------------------------------------
-
-    const students = db.prepare(`
-        SELECT
-    id,
-    roll_number,
-    name,
-    phone
-FROM students
-        ORDER BY roll_number
-    `).all();
-
-
-    // --------------------------------------------------
-    // GET ALL ATTENDANCE RECORDS IN SELECTED RANGE
-    // --------------------------------------------------
-
-    const attendanceRecords = db.prepare(`
-        SELECT
-            student_id,
-            date,
-            status
-        FROM attendance
-        WHERE substr(date, 1, 7) >= ?
-        AND substr(date, 1, 7) <= ?
-        ORDER BY date
-    `).all(from, to);
-
-
-    // --------------------------------------------------
-    // CREATE MONTH LIST
-    // --------------------------------------------------
-
-    const months = [];
-
-    let currentYear =
-        parseInt(from.substring(0, 4));
-
-    let currentMonth =
-        parseInt(from.substring(5, 7));
-
-
-    const endYear =
-        parseInt(to.substring(0, 4));
-
-    const endMonth =
-        parseInt(to.substring(5, 7));
-
-
-    while (
-        currentYear < endYear ||
-        (
-            currentYear === endYear &&
-            currentMonth <= endMonth
-        )
-    ) {
-
-        const monthString =
-            currentYear +
-            "-" +
-            String(currentMonth).padStart(2, "0");
-
-
-        months.push(monthString);
-
-
-        currentMonth++;
-
-
-        if (currentMonth > 12) {
-
-            currentMonth = 1;
-            currentYear++;
-
-        }
-
-    }
-
-
-    // --------------------------------------------------
-    // CREATE RESULT FOR EACH STUDENT
-    // --------------------------------------------------
-
-    const result = students.map(function(student) {
-
-        const studentRecords =
-            attendanceRecords.filter(
-                record =>
-                    record.student_id === student.id
-            );
-
-
-        const monthlyData = [];
-
-
-        let totalWorkingDays = 0;
-        let totalPresentDays = 0;
-        let totalAbsentDays = 0;
-
-
-        // ----------------------------------------------
-        // CALCULATE EACH MONTH
-        // ----------------------------------------------
-
-        months.forEach(function(month) {
-
-            const monthRecords =
-                studentRecords.filter(
-                    record =>
-                        record.date.substring(0, 7) === month
-                );
-
-
-            const workingDays =
-                monthRecords.length;
-
-
-            const presentDays =
-                monthRecords.filter(
-                    record =>
-                        record.status === "Present"
-                ).length;
-
-
-            const absentDays =
-                monthRecords.filter(
-                    record =>
-                        record.status === "Absent"
-                ).length;
-
-
-            const percentage =
-                workingDays > 0
-                    ? ((presentDays / workingDays) * 100).toFixed(2)
-                    : "0.00";
-
-
-            monthlyData.push({
-
-                month: month,
-
-                workingDays: workingDays,
-
-                present: presentDays,
-
-                absent: absentDays,
-
-                percentage: percentage
-
-            });
-
-
-            // Add to cumulative totals
-            totalWorkingDays += workingDays;
-
-            totalPresentDays += presentDays;
-
-            totalAbsentDays += absentDays;
-
-        });
-
-
-        // ------------------------------------------------
-        // CUMULATIVE ATTENDANCE
-        // ------------------------------------------------
-
-        const cumulativePercentage =
-            totalWorkingDays > 0
-                ? (
-                    (totalPresentDays / totalWorkingDays)
-                    * 100
-                ).toFixed(2)
-                : "0.00";
-
-
-        return {
-
-            roll_number: student.roll_number,
-
-            name: student.name,
-
-            months: monthlyData,
-
-            cumulative: {
-
-                workingDays: totalWorkingDays,
-
-                present: totalPresentDays,
-
-                absent: totalAbsentDays,
-
-                percentage: cumulativePercentage
-
-            },
-
-            cumulativePercentage: cumulativePercentage
-
-        };
-
-    });
-
-
-    res.json(result);
-
 });
 
 
@@ -450,33 +292,10 @@ FROM students
 // START SERVER
 // ===============================
 
-const server = app.listen(PORT, () => {
+app.listen(PORT, () => {
 
     console.log(
         `Server running at http://localhost:${PORT}`
     );
 
 });
-
-
-server.on("error", (error) => {
-
-    console.log(
-        "Server error:",
-        error
-    );
-
-});
-
-
-// ===============================
-// SERVER STATUS
-// ===============================
-
-setInterval(() => {
-
-    console.log(
-        "Server is running..."
-    );
-
-}, 30000);

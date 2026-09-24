@@ -1,3 +1,4 @@
 node_modules/
 attendance.db
 test.db
+.env
